@@ -1,0 +1,105 @@
+<?php
+
+/**
+ * @file
+ * Does basic checks and reports back site status.
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function uptime_monitor_menu() {
+  $item['path/to/check/site/status'] = array(
+    'title' => 'Custom page',
+    'page callback' => 'uptime_monitor_check',
+    'access callback' => TRUE,
+  );
+  return $item;
+}
+
+/**
+ * Page Callback function that calls the various checks and delivers content.
+ */
+function uptime_monitor_check() {
+  _uptime_monitor_auth();
+  /* Additional checks can be added here to change the value of $status_ok. */
+  $status = uptime_monitor_run_checks();
+  $output = _uptime_monitor_content($status);
+  /* print output and then kill drupal so page doesn't render as html */
+  print $output;
+  drupal_exit();
+}
+
+/**
+ * Create hook so other modules containing tests can be run.
+ */
+function uptime_monitor_run_checks() {
+  $results = array();
+  foreach (module_implements('uptime_monitor_check') as $module) {
+    // Calling all modules implementing hook_uptime_monitor_check and
+    // Returning results then pushing them into the $result array:
+    $results[] = module_invoke($module, 'uptime_monitor_check');
+  }
+  $check_status = TRUE;
+  foreach ($results as $result) {
+    if ($result !== TRUE) {
+      $check_status = $result;
+      $replacements = ['@message' => $result];
+      $message = "Reporting following outage to monitoring: @message";
+      watchdog('Uptime Monitor', $message, $replacements, WATCHDOG_ERROR);
+      break;
+    }
+  }
+  return $check_status;
+}
+
+/**
+ * Build the xml content for the page to be picked up by Pingdom.
+ *
+ * Format must be as follows:
+ * <pingdom_http_custom_check>
+ *     <status>OK</status>
+ *     <response_time>96.777</response_time>
+ * </pingdom_http_custom_check>
+ *
+ * response_time must be a number less than 100,000,000 with no more than
+ * three decimal places.
+ */
+function _uptime_monitor_content($status) {
+  if ($status === TRUE) {
+    $message = "OK";
+  }
+  else {
+    $message = $status;
+  }
+  /* Currently returns hour and minute of current date as response_time simply
+   * to make sure the check content isn't being cached. This value could be
+   * changed to display any meaningful value. */
+  $current_time = date('hi');
+  $output = <<<EOT
+<pingdom_http_custom_check>
+<status>$message</status>
+<response_time>$current_time</response_time>
+</pingdom_http_custom_check>
+EOT;
+
+  return $output;
+}
+
+/**
+ * Provide a basic http authentication check.
+ */
+function _uptime_monitor_auth() {
+  $valid_passwords = array("uptime_check_user" => "XXXXXX");
+  $valid_users = array_keys($valid_passwords);
+  $user = $_SERVER['PHP_AUTH_USER'];
+  $pass = $_SERVER['PHP_AUTH_PW'];
+
+  $validated = (in_array($user, $valid_users)) && ($pass == $valid_passwords[$user]);
+
+  if (!$validated) {
+    header('WWW-Authenticate: Basic realm="My Realm"');
+    header('HTTP/1.0 401 Unauthorized');
+    die("Not authorized");
+  }
+}

@@ -1,0 +1,5 @@
+name = Uptime Monitor Test CSS
+description = Make CSS files requested by cached version of page exist.
+core = 7.x
+package = Custom
+dependencies[] = uptime_monitor

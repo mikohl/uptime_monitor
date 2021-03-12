@@ -1,0 +1,69 @@
+<?php
+
+/**
+ * @file
+ * Does basic checks and reports back site status.
+ */
+
+/**
+ * Parse up the http response headers into array.
+ */
+function _uptime_test_css_get_cache_headers($curl, $header_line) {
+  $this_line = preg_split('/:/', $header_line, 2);
+  if (count($this_line) > 1) {
+    $header_array[$this_line[0]] = $this_line[1];
+  }
+  return strlen($header_line);
+}
+
+/**
+ * Implements hook_uptime_monitor_check().
+ */
+function uptime_test_css_uptime_monitor_check() {
+  /* Get the currently served homepage */
+  $header_array = $css_urls = array();
+  $ch = curl_init();
+  $test_url = ($_SERVER['HTTPS'] == 'on') ? 'https://' : 'http://';
+  $test_url .= $_SERVER['HTTP_HOST'];
+  curl_setopt($ch, CURLOPT_URL, $test_url);
+  curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+  curl_setopt($ch, CURLOPT_HEADERFUNCTION, "_uptime_test_css_get_cache_headers");
+  $cached_home = curl_exec($ch);
+  /* Load homepage contents into DOMDocument and find the "link" tags */
+  $doc = new DOMDocument();
+  @$doc->loadHTML($cached_home);
+  $css_files = $doc->getElementsByTagName('link');
+  $messages[] = TRUE;
+  if ($css_files->length < 1) {
+    $messages[] = "No CSS files found on homepage.";
+  }
+  foreach ($css_files as $file) {
+    /* Check if link tag is for css */
+    $is_css = ($file->getAttribute('type') == 'text/css');
+    if ($is_css) {
+      /* Check if this linked file is served locally */
+      $this_file = parse_url($file->getAttribute('href'));
+      $is_local = ($this_file['host'] == $_SERVER['HTTP_HOST']);
+    }
+    if ($is_css && $is_local) {
+      /* Drupal aggregated css files are named with RUID. Check name length */
+      $filename = basename($this_file['path']);
+      $is_cache_css = (strlen($filename) == 51);
+    }
+    if ($is_css && $is_local && $is_cache_css) {
+      /* Check if file exists in filesystem. */
+      if (!file_exists('public://css/' . $filename)) {
+        $messages[$filename] = "Cached page requesting cached file that does not exist.";
+      }
+      else {
+        $messages[$filename] = TRUE;
+      }
+    }
+  }
+  foreach ($messages as $file => $message) {
+    if ($message !== TRUE) {
+      return $message;
+    }
+  }
+  return TRUE;
+}
